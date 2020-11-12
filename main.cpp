@@ -18,6 +18,11 @@ constexpr double Pi = 3.14159265358979323846;
 
 constexpr static precise_t PRECISION = 1e-9;
 
+constexpr enum class f_score {
+    MICRO_F,
+    MACRO_F
+} f_score_type = f_score::MACRO_F;
+
 auto get_class_total(confusion_m_t const& cm, size_t index)
 {
     return std::accumulate(cm[index].begin(), cm[index].end(), 0);
@@ -85,19 +90,32 @@ struct training_obj
     object_features_t Ys;
 };
 
-enum distance_label_t
+std::ostream& operator<<(std::ostream& os,
+                         training_obj const& obj)
+{
+    os << "{!";
+    for (auto&& x : obj.Xs)
+        os << x << " ";
+    os << "->";
+    for (auto&& y : obj.Ys)
+        os << " " << y;
+    os << "!}";
+    return os;
+}
+
+enum class distance_l
 {
     MANHATTAN,
     EUCLIDEAN,
     CHEBYSHEV
 };
 
-distance_label_t str_to_dist_label(std::string const& str)
+distance_l str_to_dist_label(std::string const& str)
 {
-    static const std::unordered_map<std::string, distance_label_t> mp{
-            {"manhattan", MANHATTAN},
-            {"euclidean", EUCLIDEAN},
-            {"chebyshev", CHEBYSHEV}
+    static const std::unordered_map<std::string, distance_l> mp{
+            {"manhattan", distance_l::MANHATTAN},
+            {"euclidean", distance_l::EUCLIDEAN},
+            {"chebyshev", distance_l::CHEBYSHEV}
     };
 
     auto it = mp.find(str);
@@ -105,7 +123,7 @@ distance_label_t str_to_dist_label(std::string const& str)
     return it->second;
 }
 
-enum kernel_label_t
+enum class kernel_l
 {
     UNIFORM,
     TRIANGULAR,
@@ -119,19 +137,19 @@ enum kernel_label_t
     SIGMOID
 };
 
-kernel_label_t str_to_kernel_label(std::string const& str)
+kernel_l str_to_kernel_label(std::string const& str)
 {
-    static const std::unordered_map<std::string, kernel_label_t> mp{
-            {"uniform",      UNIFORM},
-            {"triangular",   TRIANGULAR},
-            {"epanechnikov", EPANECHNIKOV},
-            {"quartic",      QUARTIC},
-            {"triweight",    TRIWEIGHT},
-            {"tricube",      TRICUBE},
-            {"gaussian",     GAUSSIAN},
-            {"cosine",       COSINE},
-            {"logistic",     LOGISTIC},
-            {"sigmoid",      SIGMOID}
+    static const std::unordered_map<std::string, kernel_l> mp{
+            {"uniform",      kernel_l::UNIFORM},
+            {"triangular",   kernel_l::TRIANGULAR},
+            {"epanechnikov", kernel_l::EPANECHNIKOV},
+            {"quartic",      kernel_l::QUARTIC},
+            {"triweight",    kernel_l::TRIWEIGHT},
+            {"tricube",      kernel_l::TRICUBE},
+            {"gaussian",     kernel_l::GAUSSIAN},
+            {"cosine",       kernel_l::COSINE},
+            {"logistic",     kernel_l::LOGISTIC},
+            {"sigmoid",      kernel_l::SIGMOID}
     };
 
     auto it = mp.find(str);
@@ -139,17 +157,17 @@ kernel_label_t str_to_kernel_label(std::string const& str)
     return it->second;
 }
 
-enum window_label_t
+enum class window_l
 {
     FIXED_WINDOW,
     FLOATING_WINDOW
 };
 
-window_label_t str_to_window_label(std::string const& str)
+window_l str_to_window_label(std::string const& str)
 {
-    static const std::unordered_map<std::string, window_label_t> mp{
-            {"fixed",    FIXED_WINDOW},
-            {"variable", FLOATING_WINDOW},
+    static const std::unordered_map<std::string, window_l> mp{
+            {"fixed",    window_l::FIXED_WINDOW},
+            {"variable", window_l::FLOATING_WINDOW},
     };
 
     auto it = mp.find(str);
@@ -165,11 +183,11 @@ using kernel_function = std::function<
         precise_t(precise_t, precise_t)
 >;
 
-distance_function get_distance_fn(distance_label_t label)
+distance_function get_distance_fn(distance_l label)
 {
     switch (label)
     {
-        case MANHATTAN:
+        case distance_l::MANHATTAN:
             return [](auto&& lhs, auto&& rhs) -> precise_t
             {
                 precise_t result = 0;
@@ -178,7 +196,7 @@ distance_function get_distance_fn(distance_label_t label)
                     result += std::abs(lhs[i] - rhs[i]);
                 return result;
             };
-        case EUCLIDEAN:
+        case distance_l::EUCLIDEAN:
             return [](auto&& lhs, auto&& rhs) -> precise_t
             {
                 precise_t result = 0;
@@ -190,7 +208,7 @@ distance_function get_distance_fn(distance_label_t label)
                 }
                 return std::sqrt(result);
             };
-        case CHEBYSHEV:
+        case distance_l::CHEBYSHEV:
             return [](auto&& lhs, auto&& rhs) -> precise_t
             {
                 precise_t result = -0.1;
@@ -206,69 +224,69 @@ distance_function get_distance_fn(distance_label_t label)
     }
 }
 
-kernel_function get_kernel_function(kernel_label_t label)
+kernel_function get_kernel_function(kernel_l label)
 {
     switch (label)
     {
-        case UNIFORM:
+        case kernel_l::UNIFORM:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
                 return (temp < 1) ? 1 / precise_t(2) : 0;
             };
-        case TRIANGULAR:
+        case kernel_l::TRIANGULAR:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
                 return (temp < 1) ? 1 - precise_t(temp) : 0;
             };
-        case EPANECHNIKOV:
+        case kernel_l::EPANECHNIKOV:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
                 return (temp < 1) ? ((precise_t) 3 / 4) * (1 - temp * temp) : 0;
             };
-        case QUARTIC:
+        case kernel_l::QUARTIC:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
                 precise_t t2 = 1 - temp * temp;
                 return (temp < 1) ? ((precise_t) 15 / 16) * t2 * t2 : 0;
             };
-        case TRIWEIGHT:
+        case kernel_l::TRIWEIGHT:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
                 precise_t t2 = 1 - temp * temp;
                 return (temp < 1) ? ((precise_t) 35 / 32) * t2 * t2 * t2 : 0;
             };
-        case TRICUBE:
+        case kernel_l::TRICUBE:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
                 precise_t t2 = 1 - temp * temp * temp;
                 return (temp < 1) ? ((precise_t) 70 / 81) * t2 * t2 * t2 : 0;
             };
-        case GAUSSIAN:
+        case kernel_l::GAUSSIAN:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
                 return (1 / (std::sqrt(2 * Pi)))
                        * std::exp(((precise_t) -1 / 2) * temp * temp);
             };
-        case COSINE:
+        case kernel_l::COSINE:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
                 return (temp < 1) ? Pi / 4 * std::cos(Pi * temp / 2) : 0;
             };
-        case LOGISTIC:
+        case kernel_l::LOGISTIC:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
                 return 1 / (std::exp(temp) + 2 + std::exp(-temp));
             };
-        case SIGMOID:
+        case kernel_l::SIGMOID:
             return [](precise_t dist, precise_t window_p) -> precise_t
             {
                 auto temp = dist / window_p;
@@ -316,14 +334,18 @@ void mul(object_features_t& lhs, precise_t d)
 }
 
 object_features_t knn_predict(std::vector<training_obj> objects,
-                              distance_label_t distance_label,
-                              kernel_label_t kernel_label,
-                              window_label_t window_label,
+                              distance_l distance_label,
+                              kernel_l kernel_label,
+                              window_l window_label,
                               size_t window_k,
                               object_features_t const& q)
 {
+    assert(!objects.empty());
     for (auto&& obj : objects)
+    {
         assert(obj.Ys.size() == objects.back().Ys.size());
+        (void) obj;
+    }
     size_t target_sz = objects.back().Ys.size();
 
     auto distance_fn = get_distance_fn(distance_label);
@@ -341,10 +363,10 @@ object_features_t knn_predict(std::vector<training_obj> objects,
     precise_t window_p;
     switch (window_label)
     {
-        case FIXED_WINDOW:
+        case window_l::FIXED_WINDOW:
             window_p = window_k;
             break;
-        case FLOATING_WINDOW:
+        case window_l::FLOATING_WINDOW:
             window_p = distance_fn(objects.at(window_k).Xs, q);
             break;
         default:
@@ -428,7 +450,33 @@ void divps(object_features_t& lhs,
         lhs[i] /= rhs[i];
 }
 
-int main()
+struct result_accumulator_t
+{
+    precise_t  f_score{0};
+    kernel_l   kernel_label{kernel_l::UNIFORM};
+    distance_l distance_label{distance_l::EUCLIDEAN};
+    window_l   win_label{window_l::FIXED_WINDOW};
+    size_t     window_param{0};
+};
+
+void accumulate(result_accumulator_t& a,
+                precise_t f_score,
+                kernel_l kern_l,
+                distance_l dist_l,
+                window_l win_l,
+                size_t win_p)
+{
+    if (a.f_score < f_score)
+    {
+        a.f_score        = f_score;
+        a.kernel_label   = kern_l;
+        a.distance_label = dist_l;
+        a.win_label      = win_l;
+        a.window_param   = win_p;
+    }
+}
+
+std::vector<training_obj> prepare_dataset()
 {
     csv::CSVReader rdr("assets/wine_dataset.csv");
     std::vector<training_obj> objects;
@@ -449,7 +497,7 @@ int main()
                 Ys = {0.0, 1.0, 0.0};
                 break;
             case 3:
-                Ys = {1.0, 0.0, 1.0};
+                Ys = {0.0, 0.0, 1.0};
                 break;
             default:
                 assert(false);
@@ -470,6 +518,7 @@ int main()
         min(mins, obj.Xs);
         max(maxs, obj.Xs);
     }
+
     sub(maxs, mins);
 
     for (auto& obj : objects)
@@ -477,30 +526,247 @@ int main()
         sub(obj.Xs, mins);
         divps(obj.Xs, maxs);
     }
+    return objects;
+}
 
-    for (auto&& obj : objects)
+int get_class(object_features_t const& features)
+{
+    return std::max_element(features.begin(), features.end()) - features.begin();
+}
+
+std::ostream& operator<<(std::ostream& os,
+                         kernel_l label)
+{
+    switch (label)
     {
-        std::cout << "Xs: ";
-        for (auto&& x : obj.Xs)
-            std::cout << x << " ";
-        std::cout << "\nYs: ";
-        for (auto&& y : obj.Ys)
-            std::cout << y << " ";
-        std::cout << std::endl << std::endl;
+        case kernel_l::UNIFORM:
+            os << "uniform";
+            break;
+        case kernel_l::TRIANGULAR:
+            os << "triangular";
+            break;
+        case kernel_l::EPANECHNIKOV:
+            os << "epanechnikov";
+            break;
+        case kernel_l::QUARTIC:
+            os << "quartic";
+            break;
+        case kernel_l::TRIWEIGHT:
+            os << "triweight";
+            break;
+        case kernel_l::TRICUBE:
+            os << "tricube";
+            break;
+        case kernel_l::GAUSSIAN:
+            os << "gaussian";
+            break;
+        case kernel_l::COSINE:
+            os << "cosine";
+            break;
+        case kernel_l::LOGISTIC:
+            os << "logistic";
+            break;
+        case kernel_l::SIGMOID:
+            os << "sigmoid";
+            break;
+        default:
+            assert(false);
     }
+    return os;
+}
 
-    std::array kernel_labels{UNIFORM, TRIANGULAR, QUARTIC};
-    std::array dist_labels{EUCLIDEAN, MANHATTAN, CHEBYSHEV};
+std::ostream& operator<<(std::ostream& os,
+                         window_l label)
+{
+    switch (label)
+    {
+        case window_l::FIXED_WINDOW:
+            os << "fixed_window";
+            break;
+        case window_l::FLOATING_WINDOW:
+            os << "floating_window";
+            break;
+        default:
+            assert(false);
+    }
+    return os;
+}
 
-    std::tuple<precise_t, kernel_label_t, distance_label_t, window_label_t, size_t>
-        best_option{0, UNIFORM, EUCLIDEAN, FIXED_WINDOW, 0};
+std::ostream& operator<<(std::ostream& os,
+                         distance_l label)
+{
+    switch (label)
+    {
+        case distance_l::MANHATTAN:
+            os << "manhattan";
+            break;
+        case distance_l::EUCLIDEAN:
+            os << "euclidean";
+            break;
+        case distance_l::CHEBYSHEV:
+            os << "chebyshev";
+            break;
+        default:
+            assert(false);
+    }
+    return os;
+}
 
-    for (auto kernel_l : kernel_labels)
+int main()
+{
+    try
+    {
+        auto const objects_gold = prepare_dataset();
+
+        std::array const kernel_labels{
+            kernel_l::UNIFORM,
+            kernel_l::TRIANGULAR,
+            kernel_l::QUARTIC
+        };
+
+        std::array const dist_labels{
+            distance_l::EUCLIDEAN,
+            distance_l::MANHATTAN,
+            distance_l::CHEBYSHEV
+        };
+        result_accumulator_t accumulator;
+
+        size_t D = sqrt(objects_gold.size());
+
+        /// Default value is num of fixed window params
+        size_t tasks_cnt = 2 * D * kernel_labels.size() * dist_labels.size();
+        size_t tasks_done = 0;
+
+        std::cerr << "\rDone " << ((double) tasks_done / (double) tasks_cnt) * 100 << "%    ";
+
+        #pragma omp parallel for
+        for (size_t kn = 1; kn <= D; ++kn)
+        {
+            auto objects = objects_gold;
+            for (auto kern_l : kernel_labels)
+                for (auto dist_l : dist_labels)
+                {
+                    confusion_m_t confusion_m(3, std::vector<int>(3, 0));
+                    for (size_t i = 0; i < objects.size(); ++i)
+                    {
+                        std::swap(objects[i], objects.back());
+
+                        auto q = std::move(objects.back());
+                        objects.pop_back();
+
+                        auto predicted = knn_predict(
+                            objects, dist_l, kern_l,
+                            window_l::FIXED_WINDOW, kn, q.Xs
+                        );
+                        
+                        auto expected = get_class(q.Ys);
+                        auto got = get_class(predicted);
+                        confusion_m[expected][got]++;
+                        objects.push_back(std::move(q));
+
+                        std::swap(objects[i], objects.back());
+                    }
+
+                    precise_t score = 0;
+                    switch (f_score_type)
+                    {
+                    case f_score::MICRO_F:
+                        score = micro_macro_f_scores(confusion_m).first;
+                        break;
+                    case f_score::MACRO_F:
+                        score = micro_macro_f_scores(confusion_m).second;
+                        break;
+                    default:
+                        assert(false);
+                    }
+
+                    #pragma omp critical
+                    {
+                        accumulate(
+                            accumulator, score, kern_l, dist_l,
+                            window_l::FIXED_WINDOW, kn
+                        );
+                        ++tasks_done;
+                        std::cerr << "\rDone " << ((double) tasks_done / (double) tasks_cnt) * 100 << "%    ";
+                    }
+                }
+        }
+
         for (auto dist_l : dist_labels)
-            for (size_t k_neighbors = 1; k_neighbors < std::sqrt(objects.size()); ++k_neighbors)
+        {
+            auto dist_fun = get_distance_fn(dist_l);
+            precise_t R = 0;
+            for (size_t i = 0; i < objects_gold.size(); ++i)
+                for(size_t j = 0; j < objects_gold.size(); ++j)
+                    R = std::max(R, dist_fun(objects_gold[i].Xs, objects_gold[j].Xs));
+
+            precise_t step = R / std::sqrt(objects_gold.size());
+            #pragma omp parallel for
+            for (size_t iter = 1; iter <= D; ++iter)
             {
+                auto param = iter * step;
+                auto objects = objects_gold;
+                for (auto kern_l : kernel_labels)
+                {
+                    confusion_m_t confusion_m(3, std::vector<int>(3, 0));
+                    for (size_t i = 0; i < objects.size(); ++i)
+                    {
+                        std::swap(objects[i], objects.back());
 
+                        auto q = std::move(objects.back());
+                        objects.pop_back();
+
+                        auto predicted = knn_predict(
+                            objects, dist_l, kern_l,
+                            window_l::FLOATING_WINDOW, param, q.Xs
+                        );
+
+                        auto expected = get_class(q.Ys);
+                        auto got = get_class(predicted);
+                        confusion_m[expected][got]++;
+                        objects.push_back(std::move(q));
+
+                        std::swap(objects[i], objects.back());
+                    }
+
+                    precise_t score = 0;
+                    switch (f_score_type)
+                    {
+                        case f_score::MICRO_F:
+                            score = micro_macro_f_scores(confusion_m).first;
+                            break;
+                        case f_score::MACRO_F:
+                            score = micro_macro_f_scores(confusion_m).second;
+                            break;
+                        default:
+                            assert(false);
+                    }
+
+                    #pragma omp critical
+                    {
+                        accumulate(
+                            accumulator, score, kern_l, dist_l,
+                            window_l::FLOATING_WINDOW, param
+                        );
+                        ++tasks_done;
+                        std::cerr << "\rDone " << ((double) tasks_done / (double) tasks_cnt) * 100 << "%    ";
+                    }
+                }
             }
+        }
 
+        std::cerr << "\rDone " << ((double) tasks_done / (double) tasks_cnt) * 100 << "%    ";
+        std::cerr << std::endl;
 
+        std::cout << "Best score: " << accumulator.f_score << std::endl;
+        std::cout << accumulator.kernel_label << " "
+                  << accumulator.distance_label << " "
+                  << accumulator.win_label << "~" << accumulator.window_param
+                  << std::endl;
+    }
+    catch (std::exception const& e)
+    {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return -1;
+    }
 }
