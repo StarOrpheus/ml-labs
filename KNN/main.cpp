@@ -360,7 +360,6 @@ object_features_t knn_predict(std::vector<training_obj> objects,
             break;
         default:
             assert(false);
-            throw std::runtime_error("Bad window label");
     }
 
     if (std::abs(window_p) < PRECISION)
@@ -490,7 +489,6 @@ std::vector<training_obj> prepare_dataset()
                 break;
             default:
                 assert(false);
-                throw std::runtime_error("Bad target class: " + std::to_string(target));
         }
         it++;
 
