@@ -244,76 +244,47 @@ distance_function get_distance_fn(distance_l label)
 
 kernel_function get_kernel_function(kernel_l label)
 {
-    switch (label)
+
+    return [label] (precise_t dist, precise_t window_p) -> precise_t
     {
-        case kernel_l::UNIFORM:
-            return [](precise_t dist, precise_t window_p) -> precise_t
-            {
-                auto temp = dist / window_p;
+        auto temp = dist / window_p;
+        switch (label)
+        {
+            case kernel_l::UNIFORM:
                 return (temp < 1) ? 1 / precise_t(2) : 0;
-            };
-        case kernel_l::TRIANGULAR:
-            return [](precise_t dist, precise_t window_p) -> precise_t
-            {
-                auto temp = dist / window_p;
+            case kernel_l::TRIANGULAR:
                 return (temp < 1) ? 1 - precise_t(temp) : 0;
-            };
-        case kernel_l::EPANECHNIKOV:
-            return [](precise_t dist, precise_t window_p) -> precise_t
-            {
-                auto temp = dist / window_p;
+            case kernel_l::EPANECHNIKOV:
                 return (temp < 1) ? ((precise_t) 3 / 4) * (1 - temp * temp) : 0;
-            };
-        case kernel_l::QUARTIC:
-            return [](precise_t dist, precise_t window_p) -> precise_t
+            case kernel_l::QUARTIC:
             {
-                auto temp = dist / window_p;
                 precise_t t2 = 1 - temp * temp;
                 return (temp < 1) ? ((precise_t) 15 / 16) * t2 * t2 : 0;
-            };
-        case kernel_l::TRIWEIGHT:
-            return [](precise_t dist, precise_t window_p) -> precise_t
+            }
+            case kernel_l::TRIWEIGHT:
             {
-                auto temp = dist / window_p;
                 precise_t t2 = 1 - temp * temp;
                 return (temp < 1) ? ((precise_t) 35 / 32) * t2 * t2 * t2 : 0;
-            };
-        case kernel_l::TRICUBE:
-            return [](precise_t dist, precise_t window_p) -> precise_t
+            }
+            case kernel_l::TRICUBE:
             {
-                auto temp = dist / window_p;
                 precise_t t2 = 1 - temp * temp * temp;
                 return (temp < 1) ? ((precise_t) 70 / 81) * t2 * t2 * t2 : 0;
-            };
-        case kernel_l::GAUSSIAN:
-            return [](precise_t dist, precise_t window_p) -> precise_t
-            {
-                auto temp = dist / window_p;
+            }
+            case kernel_l::GAUSSIAN:
                 return (1 / (std::sqrt(2 * Pi)))
                        * std::exp(((precise_t) -1 / 2) * temp * temp);
-            };
-        case kernel_l::COSINE:
-            return [](precise_t dist, precise_t window_p) -> precise_t
-            {
-                auto temp = dist / window_p;
+            case kernel_l::COSINE:
                 return (temp < 1) ? Pi / 4 * std::cos(Pi * temp / 2) : 0;
-            };
-        case kernel_l::LOGISTIC:
-            return [](precise_t dist, precise_t window_p) -> precise_t
-            {
-                auto temp = dist / window_p;
+            case kernel_l::LOGISTIC:
                 return 1 / (std::exp(temp) + 2 + std::exp(-temp));
-            };
-        case kernel_l::SIGMOID:
-            return [](precise_t dist, precise_t window_p) -> precise_t
-            {
-                auto temp = dist / window_p;
+            case kernel_l::SIGMOID:
                 return 2 / (Pi * (std::exp(temp) + std::exp(-temp)));
-            };
-        default:
-            assert(false);
-            exit(-1);
-    }
+            default:
+                assert(false);
+                return 0;
+        }
+    };
 }
 
 bool equals(object_features_t const& lhs, object_features_t const& rhs)
