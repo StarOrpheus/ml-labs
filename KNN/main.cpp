@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <functional>
 #include <cmath>
+#include <execution>
 
 #include "csv.hpp"
 
@@ -203,43 +204,38 @@ using kernel_function = std::function<
 
 distance_function get_distance_fn(distance_l label)
 {
-    switch (label)
+    using namespace std::placeholders;
+    return [label] (auto&& lhs, auto&& rhs) -> precise_t
     {
-        case distance_l::MANHATTAN:
-            return [](auto&& lhs, auto&& rhs) -> precise_t
-            {
-                precise_t result = 0;
-                assert(lhs.size() == rhs.size());
-                for (size_t i = 0; i < lhs.size(); ++i)
-                    result += std::abs(lhs[i] - rhs[i]);
-                return result;
-            };
-        case distance_l::EUCLIDEAN:
-            return [](auto&& lhs, auto&& rhs) -> precise_t
-            {
-                precise_t result = 0;
-                assert(lhs.size() == rhs.size());
-                for (size_t i = 0; i < lhs.size(); ++i)
-                {
-                    precise_t temp = lhs[i] - rhs[i];
-                    result += temp * temp;
-                }
-                return std::sqrt(result);
-            };
-        case distance_l::CHEBYSHEV:
-            return [](auto&& lhs, auto&& rhs) -> precise_t
-            {
-                precise_t result = -0.1;
-                assert(lhs.size() == rhs.size());
-                for (size_t i = 0; i < lhs.size(); ++i)
-                    result = std::max(
-                            result, (precise_t) std::abs(lhs[i] - rhs[i]));
-                return result;
-            };
-        default:
-            assert(false);
-            exit(-1);
-    }
+        assert(lhs.size() == rhs.size() && "Bad feature vectors");
+        switch (label)
+        {
+            case distance_l::MANHATTAN:
+                return std::transform_reduce(
+                        std::execution::seq,
+                        lhs.begin(), lhs.end(), rhs.begin(), precise_t{0.0}, std::plus<>(),
+                        [] (auto lhs, auto rhs) { return std::abs(lhs - rhs); }
+                );
+            case distance_l::EUCLIDEAN:
+                return std::sqrt(
+                        std::transform_reduce(
+                            std::execution::seq,
+                            lhs.begin(), lhs.end(), rhs.begin(), precise_t{0.0}, std::plus<>(),
+                            [] (auto lhs, auto rhs) { return (lhs - rhs) * (lhs - rhs); }
+                        )
+                );
+            case distance_l::CHEBYSHEV:
+                return std::transform_reduce(
+                        std::execution::seq,
+                        lhs.begin(), lhs.end(), rhs.begin(), precise_t(-0.1),
+                        [] (auto a, auto b) { return std::min(a, b); },
+                        [] (auto a, auto b) { return (precise_t) std::abs(a - b); }
+                );
+            default:
+                assert(false && "Unknown distance fun label");
+                return .0;
+        }
+    };
 }
 
 kernel_function get_kernel_function(kernel_l label)
@@ -281,7 +277,7 @@ kernel_function get_kernel_function(kernel_l label)
             case kernel_l::SIGMOID:
                 return 2 / (Pi * (std::exp(temp) + std::exp(-temp)));
             default:
-                assert(false);
+                assert(false && "Unknown kernel label");
                 return 0;
         }
     };
