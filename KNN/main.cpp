@@ -11,12 +11,29 @@
 
 #include "csv.hpp"
 
-using confusion_m_t = std::vector<std::vector<int>>;
+constexpr size_t num_target_features = 3;
+
 using precise_t = long double;
 
 constexpr double Pi = 3.14159265358979323846;
-
 constexpr static precise_t PRECISION = 1e-9;
+
+using confusion_m_t = std::array<int, num_target_features * num_target_features>;
+
+template<typename T,
+         typename = std::enable_if_t<
+                 std::is_base_of_v<
+                         confusion_m_t,
+                         std::decay_t<T>
+                 >
+        >>
+constexpr auto cmatrix_at(T&& m,
+                          size_t i,
+                          size_t j)
+                          -> decltype((m[0]))
+{
+    return m[i * num_target_features + j];
+}
 
 constexpr enum class f_score {
     MICRO_F,
@@ -25,19 +42,20 @@ constexpr enum class f_score {
 
 auto get_class_total(confusion_m_t const& cm, size_t index)
 {
-    return std::accumulate(cm[index].begin(), cm[index].end(), 0);
+    auto const start_it = cm.begin() + index * num_target_features;
+    return std::reduce(start_it, start_it + num_target_features, 0);
 }
 
 std::pair<precise_t, precise_t>
 get_precision_and_recall(confusion_m_t const& cm, size_t index)
 {
     int tp_fp = 0;
-    for (size_t j = 0; j < cm.size(); ++j)
-        tp_fp += cm[j][index];
+    for (size_t j = 0; j < num_target_features; ++j)
+        tp_fp += cmatrix_at(cm, j, index); // cm[j][index]
     auto tp_fn = get_class_total(cm, index);
     return {
-            (tp_fp == 0) ? 0 : cm[index][index] / (precise_t) tp_fp,
-            (tp_fn == 0) ? 0 : cm[index][index] / (precise_t) tp_fn
+            (tp_fp == 0) ? 0 : cmatrix_at(cm, index, index) / (precise_t) tp_fp,
+            (tp_fn == 0) ? 0 : cmatrix_at(cm, index, index) / (precise_t) tp_fn
     };
 }
 
@@ -62,7 +80,7 @@ micro_macro_f_scores(confusion_m_t const& cm)
     precise_t macro_f_score = 0, micro_f_score = 0;
     precise_t micro_precision = 0, micro_recall = 0;
 
-    for (size_t i = 0; i < cm.size(); ++i)
+    for (size_t i = 0; i < num_target_features; ++i)
     {
         auto class_total = get_class_total(cm, i);
         auto[precision, recall] = get_precision_and_recall(cm, i);
@@ -646,7 +664,8 @@ int main()
             for (auto kern_l : kernel_labels)
                 for (auto dist_l : dist_labels)
                 {
-                    confusion_m_t confusion_m(3, std::vector<int>(3, 0));
+                    confusion_m_t confusion_m;
+                    confusion_m.fill(0);
                     for (size_t i = 0; i < objects.size(); ++i)
                     {
                         std::swap(objects[i], objects.back());
@@ -661,7 +680,7 @@ int main()
                         
                         auto expected = get_class(q.Ys);
                         auto got = get_class(predicted);
-                        confusion_m[expected][got]++;
+                        cmatrix_at(confusion_m, expected, got)++;
                         objects.push_back(std::move(q));
 
                         std::swap(objects[i], objects.back());
@@ -708,7 +727,8 @@ int main()
                 auto objects = objects_gold;
                 for (auto kern_l : kernel_labels)
                 {
-                    confusion_m_t confusion_m(3, std::vector<int>(3, 0));
+                    confusion_m_t confusion_m;
+                    confusion_m.fill(0);
                     for (size_t i = 0; i < objects.size(); ++i)
                     {
                         std::swap(objects[i], objects.back());
@@ -723,7 +743,7 @@ int main()
 
                         auto expected = get_class(q.Ys);
                         auto got = get_class(predicted);
-                        confusion_m[expected][got]++;
+                        cmatrix_at(confusion_m, expected, got)++;
                         objects.push_back(std::move(q));
 
                         std::swap(objects[i], objects.back());
