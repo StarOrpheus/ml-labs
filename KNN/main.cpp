@@ -434,7 +434,7 @@ void divps(object_features_t& lhs,
         lhs[i] /= rhs[i];
 }
 
-struct result_accumulator_t
+struct single_run_result_t
 {
     precise_t  f_score{0};
     kernel_l   kernel_label{kernel_l::UNIFORM};
@@ -443,21 +443,16 @@ struct result_accumulator_t
     size_t     window_param{0};
 };
 
-void accumulate(result_accumulator_t& a,
+using result_t = std::vector<single_run_result_t>;
+
+void accumulate(result_t& a,
                 precise_t f_score,
                 kernel_l kern_l,
                 distance_l dist_l,
                 window_l win_l,
                 size_t win_p)
 {
-    if (a.f_score < f_score)
-    {
-        a.f_score        = f_score;
-        a.kernel_label   = kern_l;
-        a.distance_label = dist_l;
-        a.win_label      = win_l;
-        a.window_param   = win_p;
-    }
+    a.push_back({f_score, kern_l, dist_l, win_l, win_p});
 }
 
 std::vector<training_obj> prepare_dataset()
@@ -612,11 +607,11 @@ int main()
             distance_l::MANHATTAN,
             distance_l::CHEBYSHEV
         };
-        result_accumulator_t accumulator;
+
+        result_t accumulator;
 
         size_t D = sqrt(objects_gold.size());
 
-        /// Default value is num of fixed window params
         size_t tasks_cnt = 2 * D * kernel_labels.size() * dist_labels.size();
         size_t tasks_done = 0;
 
@@ -743,11 +738,36 @@ int main()
         std::cerr << "\rDone " << ((double) tasks_done / (double) tasks_cnt) * 100 << "%    ";
         std::cerr << std::endl;
 
-        std::cout << "Best score: " << accumulator.f_score << std::endl;
-        std::cout << accumulator.kernel_label << " "
-                  << accumulator.distance_label << " "
-                  << accumulator.win_label << "~" << accumulator.window_param
+        std::stable_sort(
+            accumulator.begin(),
+            accumulator.end(),
+            [] (auto&& lhs, auto&& rhs) { return lhs.f_score > rhs.f_score; }
+        );
+
+        auto best = accumulator[0];
+        std::cout << "Best score: " << best.f_score << std::endl;
+        std::cout << best.kernel_label << " "
+                  << best.distance_label << " "
+                  << best.win_label << "~" << best.window_param
                   << std::endl;
+
+        std::ofstream dump("result.dat");
+        dump.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+
+        std::stable_sort(
+                accumulator.begin(),
+                accumulator.end(),
+                [] (auto&& lhs, auto&& rhs) { return lhs.window_param > rhs.window_param; }
+        );
+
+        for (auto&& result : accumulator)
+        {
+            if (std::make_tuple(result.distance_label, result.kernel_label, result.win_label)
+             == std::make_tuple(best.distance_label, best.kernel_label, best.win_label))
+            {
+                dump << result.window_param << "\t" << result.f_score << std::endl;
+            }
+        }
     }
     catch (std::exception const& e)
     {
