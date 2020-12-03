@@ -243,7 +243,6 @@ feature_vec solution(test_run_context& context,
         for (size_t iter = 0; iter < 2000; ++iter)
         {
             training_object& obj = objects[sample_dis(rnd_dev)];
-            bool brk = true;
             auto learning_rate = 1 / (precise_t) (iter + 1000);
             auto Forecast = scalar(W, obj.features);
             precise_t regularization_tau = 0.009;
@@ -252,8 +251,6 @@ feature_vec solution(test_run_context& context,
             {
                 precise_t d1 = dLoss(obj.features, obj.target, i, Forecast);
                 grad[i] = learning_rate * d1;
-                if (grad[i] != 0)
-                    brk = false;
             }
             muls(W, 1 - learning_rate * regularization_tau);
             subss(W, grad);

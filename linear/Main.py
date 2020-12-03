@@ -43,7 +43,6 @@ def matrix_solution(X_train, y_train, X_test, y_test):
 
 
 def run_test(filename):
-    iter_param = [10 ** k for k in range(1, 8)]
     print('Processing file {0}'.format(filename))
     with open('{0}'.format(filename), 'r') as file:
         X_train, y_train, X_test, y_test = read_dataset(file)
