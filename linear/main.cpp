@@ -119,21 +119,17 @@ size_t sample_size(std::vector<training_object> const& objects)
 }
 
 /// The SMAPE error function
-template<typename PosGeneratorF>
 precise_t smape(std::vector<training_object> const& objects,
-               feature_vec const& W,
-               PosGeneratorF&& generator)
+               feature_vec const& W)
 {
     precise_t result = 0;
-    size_t cnt = sample_size(objects);
-    for (size_t i = 0; i < cnt; ++i)
+    for (auto&& obj : objects)
     {
-        auto& obj = objects[generator()];
         auto cur_target = scalar(obj.features, W);
         result += std::abs(cur_target - obj.target)
                   / nz(std::abs(cur_target) + std::abs(obj.target));
     }
-    result /= cnt;
+    result /= objects.size();
     return result;
 }
 
@@ -218,8 +214,12 @@ private:
     precise_t   y_diff;
 };
 
-feature_vec solution(std::vector<training_object> objects,
-                     size_t m)
+struct test_run_context;
+
+feature_vec solution(test_run_context& context,
+                     std::vector<training_object> objects,
+                     size_t m,
+                     std::vector<std::pair<size_t, precise_t>>* plot_data)
 {
     normalizer norm(objects);
     norm.normalize(objects);
@@ -230,15 +230,16 @@ feature_vec solution(std::vector<training_object> objects,
 
     single_run_result result{1000, feature_vec(m)};
 
-    size_t run_cnt = 5000;
+    size_t run_cnt = 100;
     auto start = std::chrono::system_clock::now();
     feature_vec W(m, 0);
     std::vector<precise_t> grad(m);
 
+    std::vector<std::pair<size_t, precise_t>> current_plot;
     for (size_t run_id = 0; run_id < run_cnt; ++run_id)
     {
+        current_plot.clear();
         std::generate(W.begin(), W.end(), std::bind(W_init_dis, rnd_dev));
-
         for (size_t iter = 0; iter < 2000; ++iter)
         {
             training_object& obj = objects[sample_dis(rnd_dev)];
@@ -256,19 +257,21 @@ feature_vec solution(std::vector<training_object> objects,
             }
             muls(W, 1 - learning_rate * regularization_tau);
             subss(W, grad);
-            if (brk)
-                break;
+
+            if (plot_data && iter % 10 == 0)
+                current_plot.emplace_back(iter, smape(objects, W));
         }
 
         assert(W.size() == m);
-        auto current_S = smape(objects, W, std::bind(sample_dis, rnd_dev));
+        auto current_S = smape(objects, W);
         if (current_S < result.s)
         {
             result.s = current_S;
             std::swap(result.w, W);
+            if (plot_data)
+                std::swap(current_plot, *plot_data);
         }
     }
-
     return norm.denormalize(result.w);
 }
 
@@ -299,7 +302,7 @@ struct test_run_context
 {
     precise_t smape_sum_on_test{0.0};
     precise_t smape_sum_on_train{0.0};
-    std::map<std::string, std::string> results{};
+    std::map<std::filesystem::path, std::string> results{};
 
     test_run_context& operator>>=(test_run_context&& rhs)
     {
@@ -327,19 +330,16 @@ test_run_context run_test(std::filesystem::path const& path)
     fclose(in);
     ++m;
 
-    auto W = solution(train_objects, m);
+    test_run_context context;
+    std::vector<std::pair<size_t, precise_t>> plot_data;
+
+    auto W = solution(context, train_objects, m, &plot_data);
 
     std::chrono::duration<double> dur
             = std::chrono::system_clock::now() - test_start;
 
-    std::mt19937_64 rnd_dev{1437687};
-    std::uniform_int_distribution<size_t> train_sample_dis((size_t) 0, train_objects.size() - 1);
-    std::uniform_int_distribution<size_t> test_sample_dis((size_t) 0, test_objects.size() - 1);
-
-    auto smape_train = smape(train_objects, W, std::bind(train_sample_dis, rnd_dev));
-    auto smape_test = smape(test_objects, W, std::bind(test_sample_dis, rnd_dev));
-
-    test_run_context context;
+    auto smape_train = smape(train_objects, W);
+    auto smape_test = smape(test_objects, W);
 
     context.smape_sum_on_test += smape_test;
     context.smape_sum_on_train += smape_train;
@@ -352,8 +352,18 @@ test_run_context run_test(std::filesystem::path const& path)
        << "solution run took " << dur.count() << "s\n";
     if (W.size() <= 5)
         ss << "Weights: " << W << "\n";
-
     context.results.emplace(path.string(), std::move(ss).str());
+
+    std::error_code ec;
+    auto filename = path.filename().string() + ".data";
+    auto parent_path = std::filesystem::path("plots");
+    std::filesystem::create_directories(parent_path);
+    auto data_path = parent_path / filename;
+    std::filesystem::remove(data_path, ec);
+    std::ofstream plot(data_path);
+    for (auto&& [x, y] : plot_data)
+        plot << x << "\t" << std::fixed << std::setprecision(std::numeric_limits<precise_t>::max_digits10) << y << "\n";
+
     return context;
 }
 #endif
@@ -362,7 +372,6 @@ int main(int argc, char** argv)
 {
 //    std::ios_base::sync_with_stdio(false);
 
-#ifdef ENABLE_TESTS
     if (argc == 2 && std::string(argv[1]) == "test")
     {
         try
@@ -405,30 +414,4 @@ int main(int argc, char** argv)
             return -1;
         }
     }
-    else
-    {
-#endif
-        size_t n, m;
-        std::vector<training_object> objects;
-        scanf("%zu %zu", &n, &m);
-        read_objects(stdin, objects, m, n);
-
-        ++m;
-        if (n == 2 && m == 2)
-        {
-            std::cout << "31.0\n-60420.0" << std::endl;
-        }
-        else if (n == 4 && m == 2)
-        {
-            std::cout << "2.0\n-1.0" << std::endl;
-        }
-        else
-        {
-            auto W = solution(objects, m);
-            for (auto&& x : W)
-                std::cout << x << std::endl;
-        }
-#ifdef ENABLE_TESTS
-    }
-#endif
 }
