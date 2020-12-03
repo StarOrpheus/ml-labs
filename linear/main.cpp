@@ -17,7 +17,7 @@
     #include <filesystem>
 #endif
 
-using precise_t = float;
+using precise_t = double;
 
 using feature_vec = std::vector<precise_t>;
 
@@ -98,7 +98,7 @@ std::ostream& operator<<(std::ostream& out, feature_vec const& v)
 struct training_object
 {
     feature_vec features;
-    precise_t target;
+    precise_t   target;
 };
 
 struct single_run_result
@@ -114,7 +114,8 @@ precise_t nz(precise_t x)
 
 size_t sample_size(std::vector<training_object> const& objects)
 {
-    return std::min(objects.size(), (size_t) 100u);
+    return objects.size();
+//    return std::min(objects.size(), (size_t) 100u);
 }
 
 /// The SMAPE error function
@@ -145,10 +146,10 @@ precise_t copy_sign(precise_t x_, precise_t y)
         return x;
 }
 
-precise_t dLoss2(feature_vec const &x, 
-                 precise_t E,
-                 size_t i,
-                 precise_t F)
+precise_t dLoss(feature_vec const &x,
+                precise_t E,
+                size_t i,
+                precise_t F)
 {
     assert(i < x.size());
     auto num = x[i] * (copy_sign(std::abs(F) + std::abs(E), F - E) - copy_sign(F - E, F));
@@ -229,27 +230,26 @@ feature_vec solution(std::vector<training_object> objects,
 
     single_run_result result{1000, feature_vec(m)};
 
-    size_t run_cnt = 10000;
+    size_t run_cnt = 5000;
     auto start = std::chrono::system_clock::now();
     feature_vec W(m, 0);
     std::vector<precise_t> grad(m);
 
     for (size_t run_id = 0; run_id < run_cnt; ++run_id)
     {
-//        std::shuffle(objects.begin(), objects.end(), rnd_dev);
         std::generate(W.begin(), W.end(), std::bind(W_init_dis, rnd_dev));
 
-        for (size_t iter = 0; iter < sample_size(objects); ++iter)
+        for (size_t iter = 0; iter < 2000; ++iter)
         {
             training_object& obj = objects[sample_dis(rnd_dev)];
             bool brk = true;
-            auto learning_rate = 1 / (precise_t) (iter + 1);
+            auto learning_rate = 1 / (precise_t) (iter + 1000);
             auto Forecast = scalar(W, obj.features);
-            precise_t regularization_tau = 0.008;
+            precise_t regularization_tau = 0.009;
 
             for (size_t i = 0; i < m; ++i)
             {
-                precise_t d1 = dLoss2(obj.features, obj.target, i, Forecast);
+                precise_t d1 = dLoss(obj.features, obj.target, i, Forecast);
                 grad[i] = learning_rate * d1;
                 if (grad[i] != 0)
                     brk = false;
@@ -267,9 +267,6 @@ feature_vec solution(std::vector<training_object> objects,
             result.s = current_S;
             std::swap(result.w, W);
         }
-
-        if (std::chrono::system_clock::now() - start >= std::chrono::milliseconds(850))
-            break;
     }
 
     return norm.denormalize(result.w);
@@ -302,11 +299,18 @@ struct test_run_context
 {
     precise_t smape_sum_on_test{0.0};
     precise_t smape_sum_on_train{0.0};
-    std::map<std::string, std::string> results;
+    std::map<std::string, std::string> results{};
+
+    test_run_context& operator>>=(test_run_context&& rhs)
+    {
+        smape_sum_on_train += rhs.smape_sum_on_train;
+        smape_sum_on_test += rhs.smape_sum_on_test;
+        std::move(rhs.results.begin(), rhs.results.end(), std::inserter(results, results.end()));
+        return *this;
+    }
 };
 
-void run_test(test_run_context& context,
-              std::filesystem::path const& path)
+test_run_context run_test(std::filesystem::path const& path)
 {
     auto test_start = std::chrono::system_clock::now();
 
@@ -335,22 +339,22 @@ void run_test(test_run_context& context,
     auto smape_train = smape(train_objects, W, std::bind(train_sample_dis, rnd_dev));
     auto smape_test = smape(test_objects, W, std::bind(test_sample_dis, rnd_dev));
 
-    #pragma omp critical
-    {
-        context.smape_sum_on_test += smape_test;
-        context.smape_sum_on_train += smape_train;
+    test_run_context context;
 
-        std::stringstream ss;
-        ss << "#############\n"
-           << "test " << path << " train_objects_num=" << n1 << " test_objects_num=" << n2 << "\n"
-           << "Loss on train set = " << smape_train << "\n"
-           << "Loss on test set = " << smape_test << "\n"
-           << "solution run took " << dur.count() << "s\n";
-        if (W.size() <= 5)
-            ss << "Weights: " << W << "\n";
+    context.smape_sum_on_test += smape_test;
+    context.smape_sum_on_train += smape_train;
 
-        context.results.emplace(path.string(), std::move(ss).str());
-    }
+    std::stringstream ss;
+    ss << "#############\n"
+       << "test " << path << " train_objects_num=" << n1 << " test_objects_num=" << n2 << "\n"
+       << "Loss on train set = " << smape_train << "\n"
+       << "Loss on test set = " << smape_test << "\n"
+       << "solution run took " << dur.count() << "s\n";
+    if (W.size() <= 5)
+        ss << "Weights: " << W << "\n";
+
+    context.results.emplace(path.string(), std::move(ss).str());
+    return context;
 }
 #endif
 
@@ -363,32 +367,37 @@ int main(int argc, char** argv)
     {
         try
         {
-            std::vector<std::string> files;
-            std::transform(std::filesystem::directory_iterator("assets"),
-                           std::filesystem::directory_iterator(),
-                           std::back_inserter(files),
-                           [] (auto&& f)
-                           {
-                                return f.path();
-                           });
+            std::vector<std::filesystem::path> suites = { "tests/"/*, "simple_tests/" */ };
+            for (auto&& suite : suites)
+            {
+                std::vector<std::string> files;
+                test_run_context context;
 
-            test_run_context context;
+                std::transform(std::filesystem::directory_iterator(suite),
+                               std::filesystem::directory_iterator(),
+                               std::back_inserter(files),
+                               [] (auto&& f) { return f.path(); });
 
-            #pragma omp parallel for
-            for (size_t i = 0; i < files.size(); ++i)
-                run_test(context, files[i]);
+                #pragma omp parallel for
+                for (size_t i = 0; i < files.size(); ++i)
+                {
+                    auto run_result = run_test(files[i]);
+                    #pragma omp critical
+                    {
+                        context >>= std::move(run_result);
+                    }
+                }
 
-//            run_test(context, "assets/kek.in");
+                for (auto&& result : context.results)
+                    std::cout << result.second;
 
-            for (auto&& result : context.results)
-                std::cout << result.second;
-
-            size_t num_tests = files.size();
-            std::cout << "#############\n"
-                      << "Overall test score:\n"
-                      << "\t" << num_tests - context.smape_sum_on_train << "/" << (precise_t) num_tests << " on train\n"
-                      << "\t" << num_tests - context.smape_sum_on_test << "/" << (precise_t) num_tests << " on test"
-                      << std::endl;
+                size_t num_tests = files.size();
+                std::cout << "#############\n"
+                          << "Overall suite score for " << suite << ":\n"
+                          << "\t" << num_tests - context.smape_sum_on_train << "/" << (precise_t) num_tests << " on train\n"
+                          << "\t" << num_tests - context.smape_sum_on_test << "/" << (precise_t) num_tests << " on test"
+                          << std::endl << std::endl;
+            }
         }
         catch (std::exception const& e)
         {
