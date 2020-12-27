@@ -198,7 +198,7 @@ struct Bayes
         }
     }
 
-    class_id_t classify(word_list const& Xs)
+    std::pair<class_id_t, precise_t> classify(word_list const& Xs)
     {
         vector<pfraction_t> metrics;
         metrics.reserve(classes_prob.size());
@@ -225,7 +225,8 @@ struct Bayes
             metrics[target].first -= metrics[target].second;
         }
 
-        return max_element(metrics.begin(), metrics.end()) - metrics.begin();
+        auto it = max_element(metrics.begin(), metrics.end());
+        return {it - metrics.begin(), it->first};
     }
 
 private:
@@ -349,49 +350,41 @@ private:
 
 using confusion_m_t = vector<vector<int>>;
 
-auto get_class_total(confusion_m_t const& cm, size_t index)
-{
-    return accumulate(cm[index].begin(), cm[index].end(), 0);
-}
-
-pair<precise_t, precise_t>
-get_precision_and_recall(confusion_m_t const& cm, size_t index)
-{
-    int tp_fp = 0;
-    for (size_t j = 0; j < cm.size(); ++j)
-        tp_fp += cm[j][index];
-    auto tp_fn = get_class_total(cm, index);
-    return {
-            (tp_fp == 0) ? 0 : cm[index][index] / (precise_t) tp_fp,
-            (tp_fn == 0) ? 0 : cm[index][index] / (precise_t) tp_fn
-    };
-}
-
-precise_t f_score(precise_t precision, precise_t recall)
-{
-    auto sum = precision + recall;
-    return (abs(sum) < 0.001)
-           ? 0
-           : 2 * precision * recall / sum;
-}
-
-precise_t f_score(confusion_m_t const& cm, size_t index)
-{
-    auto[precision, recall] = get_precision_and_recall(cm, index);
-    return f_score(precision, recall);
-}
-
 using hyperparam_t = tuple< precise_t //!< alpha
                           , precise_t //!< lambda[0]
->;
+                          >;
+
+using roc_pts_t = std::vector<std::pair<precise_t, precise_t>>;
 
 struct run_result_t
 {
     hyperparam_t params;
     size_t N;
-    precise_t F_score;
     precise_t Accuracy;
+    roc_pts_t points;
 };
+
+roc_pts_t as_roc_plot(std::vector<std::pair<precise_t, bool>>&& mp, size_t positives)
+{
+//    std::sort(mp.begin(), mp.end());
+    roc_pts_t result;
+    result.emplace_back(0., 0.);
+    precise_t cur_x{0};
+    precise_t cur_y{0};
+
+    for (auto&&[possib, guessed] : mp)
+    {
+        if (guessed)
+            cur_y += 1 / (precise_t) positives;
+        else
+            cur_x += 1 / (precise_t) (mp.size() - positives);
+
+        result.emplace_back(cur_x, cur_y);
+    }
+    result.emplace_back(1., 1.);
+
+    return result;
+}
 
 int main()
 {
@@ -441,12 +434,13 @@ int main()
             for (auto&& part : data)
                 ngrammed_parts.emplace_back(ngrammer.apply(part));
 
-#pragma omp parallel for
+            #pragma omp parallel for
             for (size_t iter = 0; iter < run_params.size(); ++iter)
             {
                 auto[alpha, zero_lambda] = run_params[iter];
 
                 confusion_m_t cm(2, vector<int>(2, 0));
+                std::vector<std::pair<precise_t, bool>> forecasts;
 
                 for (size_t test_id = 0; test_id < num_parts; test_id++)
                 {
@@ -464,32 +458,20 @@ int main()
                     for (size_t i = 0; i < test_Xs.size(); ++i)
                     {
                         auto E = test_Ys[i];
-                        auto got = model.classify(test_Xs[i]);
+                        auto[got, p] = model.classify(test_Xs[i]);
                         cm[E][got]++;
+                        forecasts.emplace_back(p, E == got);
                     }
                 }
 
-                precise_t micro_precision = 0;
-                precise_t micro_recall = 0;
-                precise_t total = 0;
-                for (size_t i = 0; i < 2; ++i)
-                {
-                    auto class_total = get_class_total(cm, i);
-                    auto[precision, recall] = get_precision_and_recall(cm, i);
-                    total += class_total;
-                    micro_precision += precision * class_total;
-                    micro_recall += recall * class_total;
-                }
-
-                auto Accuracy = (cm[0][0] + cm[1][1]) / total;
-
-                micro_precision /= total;
-                micro_recall /= total;
-                auto F = f_score(micro_precision, micro_recall);
-#pragma omp critical
+                auto total = cm[0][0] + cm[0][1] + cm[1][0] + cm[1][1];
+                auto positives = cm[0][0] + cm[1][1];
+                auto Accuracy = positives / (precise_t) total;
+                auto roc = as_roc_plot(std::move(forecasts), positives);
+                #pragma omp critical
                 {
                     run_results.push_back(
-                            {run_params[iter], ngramm_n, F, Accuracy});
+                            {run_params[iter], ngramm_n, Accuracy, std::move(roc)});
                     cerr << "\rDone "
                          << run_results.size() / (precise_t) run_params.size()
                          << "      ";
@@ -501,7 +483,7 @@ int main()
         sort(run_results.begin(), run_results.end(),
              [](auto& lhs, auto& rhs)
              {
-                 return lhs.F_score > rhs.F_score;
+                 return lhs.Accuracy > rhs.Accuracy;
              });
 
         cerr << "Top 5 results: " << endl;
@@ -511,33 +493,16 @@ int main()
             cerr << " Ngramm's N=" << result.N
                  << " Alpha=" << get<0>(result.params)
                  << " lambda_0=" << get<1>(result.params)
-                 << " F=" << result.F_score
                  << " Acc=" << result.Accuracy
                  << endl;
         }
 
-        run_results.erase(
-            partition(
-                run_results.begin(), run_results.end(),
-                [](auto& r) { return r.N == 1 && get<0>(r.params) == 1; }
-            ),
-            run_results.end()
-        );
-
-        sort(
-            run_results.begin(), run_results.end(),
-            [](auto& lhs, auto& rhs)
-            {
-                return get<1>(lhs.params) > get<1>(rhs.params);
-            }
-        );
-
         ofstream out;
         out.exceptions(out.exceptions() | ios::failbit);
-        out.open("result_accuracy.dat");
+        out.open("result_roc.dat");
 
-        for (auto&& r : run_results)
-            out << std::get<1>(r.params) << "\t" << r.Accuracy << "\n";
+        for (auto&&[x, y] : run_results[0].points)
+            out << x << "\t" << y << "\n";
         out.flush();
     }
     catch (exception const& e)
